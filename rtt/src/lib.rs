@@ -14,9 +14,10 @@
 /// and writing it to the ring buffer in memory.
 use core::fmt;
 use core::ptr;
+use core::ptr::read;
 
 static mut UP_BUF: [u8; 1024] = [0u8; 1024];
-static mut DOWN_BUF: [u8; 16] = [0u8; 16];
+static mut DOWN_BUF: [u8; 256] = [0u8; 256];
 
 /// Ring buffer for communicating between target and host.
 /// This must be binary compatible with the RTT implementation
@@ -117,6 +118,48 @@ impl Buffer {
         }
 
         true
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> usize {
+        let size_of_buffer = self.size_of_buffer as usize;
+        let mut read_offset = self.get_read_offset() as usize;
+        let write_offset = self.get_write_offset() as usize;
+        let mut bytes_copied = 0 as usize;
+        let mut bytes_readed = 0 as usize;
+
+        if read_offset > write_offset {
+            let bytes_remaining = size_of_buffer - read_offset;
+            bytes_copied = bytes_remaining.min(buf.len());
+            bytes_readed = bytes_copied;
+            unsafe {
+                ptr::copy(
+                    self.buf_start.offset(read_offset as isize),
+                    buf.as_mut_ptr(),
+                    bytes_copied
+                );
+            }
+            read_offset = read_offset + bytes_copied;
+            if read_offset == size_of_buffer {
+                read_offset = 0;
+            }
+            self.set_read_offset(read_offset as u32);
+        }
+
+        let bytes_remaining = write_offset - read_offset;
+        if bytes_remaining > 0 {
+            bytes_copied = (buf.len() - bytes_copied).min(bytes_remaining);
+            unsafe {
+                ptr::copy(
+                    self.buf_start.offset(read_offset as isize),
+                    buf.as_mut_ptr().offset(bytes_readed as isize),
+                    bytes_copied
+                );
+            }
+            bytes_readed = bytes_readed + bytes_copied;
+            self.set_read_offset(read_offset as u32 + bytes_copied as u32);
+        }
+
+        bytes_readed
     }
 }
 
@@ -220,6 +263,24 @@ impl NonBlockingOutput {
     pub fn new() -> Self {
         Self { blocked: false }
     }
+
+    pub fn write(&mut self, s: &str) {
+        if !self.blocked {
+            unsafe {
+                _SEGGER_RTT.init();
+                if !_SEGGER_RTT.up.write(s.as_bytes(), false) {
+                    self.blocked = true;
+                }
+            }
+        }
+    }
+
+    pub fn write_bytes(&mut self, buf: &[u8]) {
+        unsafe {
+            _SEGGER_RTT.init();
+            _SEGGER_RTT.up.write(buf, false);
+        }
+    }
 }
 
 impl fmt::Write for NonBlockingOutput {
@@ -227,11 +288,24 @@ impl fmt::Write for NonBlockingOutput {
         if !self.blocked {
             unsafe {
                 _SEGGER_RTT.init();
-                if !_SEGGER_RTT.up.write(s.as_bytes(), true) {
+                if !_SEGGER_RTT.up.write(s.as_bytes(), false) {
                     self.blocked = true;
                 }
             }
         }
         Ok(())
+    }
+}
+
+pub fn try_read(buf: &mut[u8]) -> usize {
+    unsafe {
+        _SEGGER_RTT.init();
+        _SEGGER_RTT.down.read(buf)
+    }
+}
+
+pub fn down_info() -> (u32, u32) {
+    unsafe {
+        (_SEGGER_RTT.down.get_read_offset(), _SEGGER_RTT.down.get_write_offset())
     }
 }
