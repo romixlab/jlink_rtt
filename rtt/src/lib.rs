@@ -238,6 +238,24 @@ impl Output {
     pub fn new() -> Self {
         Self {}
     }
+
+    pub fn write(&mut self, s: &str) {
+        if !self.blocked {
+            unsafe {
+                _SEGGER_RTT.init();
+                if !_SEGGER_RTT.up.write(s.as_bytes(), true) {
+                    self.blocked = true;
+                }
+            }
+        }
+    }
+
+    pub fn write_bytes(&mut self, buf: &[u8]) {
+        unsafe {
+            _SEGGER_RTT.init();
+            _SEGGER_RTT.up.write(buf, true);
+        }
+    }
 }
 
 impl fmt::Write for Output {
