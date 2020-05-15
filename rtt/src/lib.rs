@@ -269,33 +269,28 @@ impl fmt::Write for Output {
 /// Implements fmt::Write.
 pub struct NonBlockingOutput {
     blocked: bool,
+    shortcircuit: bool
 }
 
 impl NonBlockingOutput {
     /// Create a non-blocking output stream
     #[inline]
-    pub fn new() -> Self {
-        Self { blocked: false }
+    pub fn new(shortcircuit: bool) -> Self {
+        Self { blocked: false, shortcircuit }
     }
 
     pub fn write(&mut self, s: &str) {
-        if !self.blocked {
-            unsafe {
-                _SEGGER_RTT.init();
-                if !_SEGGER_RTT.up.write(s.as_bytes(), false) {
-                    self.blocked = true;
-                }
-            }
-        }
+        self.write_bytes(s.as_bytes());
     }
 
     pub fn write_bytes(&mut self, buf: &[u8]) {
-        if !self.blocked {
-            unsafe {
-                _SEGGER_RTT.init();
-                if !_SEGGER_RTT.up.write(buf, false) {
-                    self.blocked = true;
-                }
+        if self.blocked && self.shortcircuit {
+            return;
+        }
+        unsafe {
+            _SEGGER_RTT.init();
+            if !_SEGGER_RTT.up.write(buf, false) {
+                self.blocked = true;
             }
         }
     }
@@ -303,14 +298,7 @@ impl NonBlockingOutput {
 
 impl fmt::Write for NonBlockingOutput {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        if !self.blocked {
-            unsafe {
-                _SEGGER_RTT.init();
-                if !_SEGGER_RTT.up.write(s.as_bytes(), false) {
-                    self.blocked = true;
-                }
-            }
-        }
+        self.write_bytes(s.as_bytes());
         Ok(())
     }
 }
